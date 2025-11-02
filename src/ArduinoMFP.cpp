@@ -49,16 +49,9 @@ String ArduinoMFP::buildCreateScanJobSOAP(const String& messageID, const String&
     // Use provided params instead of fixed ones
     return
     "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-"<soap:Envelope "
-"xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\" "
-"xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" "
-"xmlns:wxf=\"http://schemas.xmlsoap.org/ws/2004/09/transfer\" "
-"xmlns:wsd=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" "
-"xmlns:wsdp=\"http://schemas.xmlsoap.org/ws/2006/02/devprof\" "
-"xmlns:sca=\"http://schemas.microsoft.com/windows/2006/08/wdp/scan\" "
-"xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
-"xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">"
-
+    "<soap:Envelope xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\" "
+                   "xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" "
+                   "xmlns:sca=\"http://schemas.microsoft.com/windows/2006/08/wdp/scan\">"
     "<soap:Header>"
       "<wsa:To>http://" + messageID + "/WebServices/ScannerService</wsa:To>"  // will fix in scan()
       "<wsa:Action>http://schemas.microsoft.com/windows/2006/08/wdp/scan/CreateScanJob</wsa:Action>"
@@ -92,16 +85,9 @@ String ArduinoMFP::buildCreateScanJobSOAP(const String& messageID, const String&
 String ArduinoMFP::buildRetrieveImageSOAP(const String& messageID, const String& jobUUID, const String& jobId, const String& jobToken) {
     return
     "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-"<soap:Envelope "
-"xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\" "
-"xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" "
-"xmlns:wxf=\"http://schemas.xmlsoap.org/ws/2004/09/transfer\" "
-"xmlns:wsd=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" "
-"xmlns:wsdp=\"http://schemas.xmlsoap.org/ws/2006/02/devprof\" "
-"xmlns:sca=\"http://schemas.microsoft.com/windows/2006/08/wdp/scan\" "
-"xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
-"xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">"
-
+    "<soap:Envelope xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\" "
+                   "xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" "
+                   "xmlns:sca=\"http://schemas.microsoft.com/windows/2006/08/wdp/scan\">"
     "<soap:Header>"
       "<wsa:To>http://" + jobUUID + "/WebServices/ScannerService</wsa:To>"  // fix in scan()
       "<wsa:Action>http://schemas.microsoft.com/windows/2006/08/wdp/scan/RetrieveImage</wsa:Action>"
@@ -321,63 +307,40 @@ uint8_t* ArduinoMFP::getImageBuffer() const {
 }
 
 
-uint8_t* ArduinoMFP::scan(int height, int width, const char* origin, const char* url, int port, const char* format, int filesystem) {
+uint8_t* ArduinoMFP::scan(int height, int width, const char* origin, const char* url, int port, const char* format, int filesystem = -1) {
     freeImageBuffer();
     imageSize = 0;
 
     String host(url);
 
-    // 1️⃣ Ask the device for supported services
-    String info = supported(url, port);
-    String endpoint = "/WebServices/ScannerService"; // default fallback
-
-    // 2️⃣ Extract "scannerService" from the returned JSON text manually
-    int keyPos = info.indexOf("\"scannerService\":");
-    if (keyPos != -1) {
-        int firstQuote = info.indexOf("\"", keyPos + 18);
-        int secondQuote = info.indexOf("\"", firstQuote + 1);
-        if (firstQuote != -1 && secondQuote != -1) {
-            String scannerUrl = info.substring(firstQuote + 1, secondQuote);
-            scannerUrl.trim();
-            if (scannerUrl.length() > 0 && scannerUrl != "null" && scannerUrl != "unknown") {
-                // Example: http://192.168.1.23:8080/WebServices/ScannerService
-                int pathStart = scannerUrl.indexOf("/", 7); // skip "http://"
-                if (pathStart != -1) {
-                    endpoint = scannerUrl.substring(pathStart);
-                }
-            }
-        }
-    }
-
-    Serial.println("✅ Detected scanner endpoint: " + endpoint);
-
-    // 3️⃣ Use this endpoint in the SOAP calls
-    // To do this, we modify sendSoapRequest() slightly to accept a custom endpoint.
-
     String jobUUID, jobId, jobToken;
+
     if (!createScanJob(host, port, height, width, String(origin), String(format), jobUUID, jobId, jobToken)) {
-        Serial.println("❌ Failed to create scan job");
         return nullptr;
     }
 
     if (!retrieveImage(host, port, jobUUID, jobId, jobToken)) {
-        Serial.println("❌ Failed to retrieve image");
         return nullptr;
     }
 
-    // 4️⃣ Optional: save to FS
     if (filesystem == 0 || filesystem == 1) {
-        File filePtr = (filesystem == 0) ? SPIFFS.open("/scan.jpg", FILE_WRITE)
-                                         : LittleFS.open("/scan.jpg", FILE_WRITE);
+        File filePtr;
+
+        if (filesystem == 0) {
+            filePtr = SPIFFS.open("/scan.jpg", FILE_WRITE);
+        } else {
+            filePtr = LittleFS.open("/scan.jpg", FILE_WRITE);
+        }
 
         if (!filePtr) {
-            Serial.println("❌ Failed to open file for writing");
+            Serial.println("Failed to open file for writing");
             return nullptr;
         }
 
         filePtr.write(imageBuffer, imageSize);
         filePtr.close();
-        Serial.println("💾 Image saved to filesystem");
+
+        Serial.println("Image saved to filesystem");
     }
 
     return imageBuffer;
@@ -573,27 +536,13 @@ String ArduinoMFP::supported(const char* url, int port) {
 
     pos = end + 1;
   }
-    // --- Detect supported schemas ---
-  String schema = "";
-
-  if (response.indexOf("2005/04/discovery") != -1) schema += "2005,";
-  if (response.indexOf("2006/02/devprof") != -1) schema += "2006,";
-  if (response.indexOf("2006/08/wdp/scan") != -1) schema += "2006-scan,";
-  if (response.indexOf("2004/08/addressing") != -1) schema += "2004-addr,";
-  if (response.indexOf("2004/09/transfer") != -1) schema += "2004-xfer,";
-
-  if (schema.endsWith(",")) schema.remove(schema.length() - 1);
-  if (schema == "") schema = "unknown";
-
-  
 
   // --- Return JSON summary ---
   String json = "{";
   json += "\"modelName\": \"" + modelName + "\", ";
   json += "\"modelUrl\": \"" + modelUrl + "\", ";
   json += "\"printerService\": \"" + printerUrl + "\", ";
-  json += "\"scannerService\": \"" + scannerUrl + "\", ";
-  json += "\"schema\": \"" + schema + "\"";
+  json += "\"scannerService\": \"" + scannerUrl + "\"";
   json += "}";
 
   return json;
